@@ -1,0 +1,35 @@
+name: Build TNxIDM for Windows
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Self-test (console, before packaging)
+        run: python main.py --self-test
+      - name: Build exe with PyInstaller (onedir)
+        run: pyinstaller --noconfirm --clean --onedir --windowed --name TNxIDM main.py
+      - name: Zip onedir folder
+        run: powershell -Command "Compress-Archive -Path dist\\TNxIDM -DestinationPath TNxIDM-PC-Windows-v1.0.zip -Force"
+      - name: Build installer with Inno Setup
+        run: |
+          choco install innosetup -y
+          iscc installer.iss
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0
+          name: TNxIDM v1.0
+          files: |
+            TNxIDM-PC-Windows-v1.0.zip
+            installer-output/TNxIDM-Setup-v1.0.exe
