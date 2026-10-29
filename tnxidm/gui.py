@@ -4,7 +4,7 @@ Note: true real-time light refraction like Apple's is not possible in Qt.
 This is the closest frosted-glass approximation: RGBA fills, specular
 1px top-edge highlights, large radii, soft drop shadows and layered gradients.
 """
-import math, os, re, subprocess, sys, time
+import math, os, re, subprocess, sys, threading, time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QDateTime
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QDialog, QFormLayout, QComboBox, QSpinBox, QCheckBox, QFileDialog, QMessageBox,
     QSystemTrayIcon, QMenu, QDateTimeEdit, QAbstractItemView, QFrame, QHeaderView)
 
+from .bridge import BridgeServer, PORT_TRIES
 from .categories import category_for
 from .engine import DownloadManager, DownloadTask, GlobalLimiter, format_size, format_speed
 from .grabber import fetch_links, probe_size
@@ -204,9 +205,51 @@ class MainWindow(QMainWindow):
             b = QPushButton(key); b.clicked.connect(fn); acts.addWidget(b)
         root.addLayout(acts)
         self._setup_tray()
+        # Browser-extension bridge: items arrive on a background thread, so we
+        # queue them and drain on the GUI thread via a timer (Qt-safe).
+        self._bridge_items = []
+        self._bridge_lock = threading.Lock()
+        self.bridge = None
+        if self.settings.get("browser_bridge", True):
+            self._start_bridge()
+        self.bridge_timer = QTimer(self); self.bridge_timer.timeout.connect(self._drain_bridge); self.bridge_timer.start(1000)
         self.refresh_timer = QTimer(self); self.refresh_timer.timeout.connect(self.refresh); self.refresh_timer.start(800)
         self.clip_timer = QTimer(self); self.clip_timer.timeout.connect(self._check_clipboard); self.clip_timer.start(1500)
         self.refresh()
+    def _start_bridge(self):
+        base = int(self.settings.get("bridge_port", 8765) or 8765)
+        for p in range(base, base + PORT_TRIES):
+            try:
+                self.bridge = BridgeServer(p, on_add=self._on_bridge_item)
+                self.bridge.start()
+                return
+            except OSError:
+                continue
+        self.bridge = None
+    def _on_bridge_item(self, item):
+        with self._bridge_lock:
+            self._bridge_items.append(item)
+    def _drain_bridge(self):
+        with self._bridge_lock:
+            items, self._bridge_items = self._bridge_items, []
+        if not items:
+            return
+        existing = {t.url for t in self.manager.tasks}
+        for it in items:
+            url = it.get("url", "")
+            if not url or url in existing:
+                continue
+            existing.add(url)
+            headers = {}
+            if it.get("user_agent"):
+                headers["User-Agent"] = it["user_agent"]
+            if it.get("referrer"):
+                headers["Referer"] = it["referrer"]
+            name = it.get("filename") or url.rstrip("/").rsplit("/", 1)[-1].split("?")[0] or None
+            dest = str(Path(self.settings.get("base_folder")) / category_for(name or ""))
+            self.manager.add(DownloadTask(url, dest, name, int(self.settings.get("default_connections", 8)), headers, state_dir=str(data_dir())))
+            if self.tray:
+                self.tray.showMessage("TNxIDM", f"{tr(self.lang, 'browser_link_added')}: {name or url}", QSystemTrayIcon.Information, 5000)
     def _table(self, headers):
         t = QTableWidget(0, len(headers))
         t.setHorizontalHeaderLabels(headers)
@@ -233,6 +276,8 @@ class MainWindow(QMainWindow):
         self.limit_spin = QSpinBox(); self.limit_spin.setRange(0, 1000000); self.limit_spin.setValue(int(self.settings.get("speed_limit_kbps", 0)))
         self.base_edit = QLineEdit(str(self.settings.get("base_folder")))
         self.clip_check = QCheckBox(); self.clip_check.setChecked(bool(self.settings.get("clipboard_monitor", True)))
+        self.bridge_check = QCheckBox(); self.bridge_check.setChecked(bool(self.settings.get("browser_bridge", True)))
+        self.port_spin = QSpinBox(); self.port_spin.setRange(1024, 65535); self.port_spin.setValue(int(self.settings.get("bridge_port", 8765) or 8765))
         self.tray_check = QCheckBox(); self.tray_check.setChecked(bool(self.settings.get("minimize_to_tray", True)))
         self.lang_combo = QComboBox(); self.lang_combo.addItems(["bn", "en"]); self.lang_combo.setCurrentText(self.lang)
         save = QPushButton(tr(self.lang, "save")); save.clicked.connect(self._save_settings)
@@ -241,6 +286,10 @@ class MainWindow(QMainWindow):
         form.addRow(tr(self.lang, "speed_limit"), self.limit_spin)
         form.addRow(tr(self.lang, "base_folder"), self.base_edit)
         form.addRow(tr(self.lang, "clipboard_monitor"), self.clip_check)
+        form.addRow(tr(self.lang, "browser_bridge"), self.bridge_check)
+        form.addRow(tr(self.lang, "bridge_port"), self.port_spin)
+        ext_note = QLabel(tr(self.lang, "browser_ext_note")); ext_note.setWordWrap(True)
+        form.addRow(ext_note)
         form.addRow(tr(self.lang, "minimize_to_tray"), self.tray_check)
         form.addRow(tr(self.lang, "language"), self.lang_combo)
         form.addRow(QLabel(tr(self.lang, "clipboard_note")))
@@ -252,6 +301,8 @@ class MainWindow(QMainWindow):
         self.settings.set("speed_limit_kbps", self.limit_spin.value())
         self.settings.set("base_folder", self.base_edit.text())
         self.settings.set("clipboard_monitor", self.clip_check.isChecked())
+        self.settings.set("browser_bridge", self.bridge_check.isChecked())
+        self.settings.set("bridge_port", self.port_spin.value())
         self.settings.set("minimize_to_tray", self.tray_check.isChecked())
         self.settings.set("language", self.lang_combo.currentText())
         self.lang = self.lang_combo.currentText()
@@ -276,6 +327,8 @@ class MainWindow(QMainWindow):
         if self.settings.get("minimize_to_tray", True) and self.tray:
             event.ignore(); self.hide()
         else:
+            if self.bridge:
+                self.bridge.stop()
             self.manager.stop_scheduler(); event.accept()
     def _clipboard_text(self):
         try:
