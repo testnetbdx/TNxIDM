@@ -17,10 +17,12 @@ jobs:
         run: pip install -r requirements.txt
       - name: Self-test (console, before packaging)
         run: python main.py --self-test
+      - name: Bridge self-test (browser extension localhost bridge)
+        run: python -c "from tnxidm.bridge import self_test; self_test()"
       - name: Build exe with PyInstaller (onedir)
         run: pyinstaller --noconfirm --clean --onedir --windowed --name TNxIDM main.py
-      - name: Zip onedir folder
-        run: powershell -Command "Compress-Archive -Path dist\\TNxIDM -DestinationPath TNxIDM-PC-Windows-v1.0.zip -Force"
+      - name: Zip onedir folder + browser extension
+        run: powershell -Command "Compress-Archive -Path dist\\TNxIDM, browser-extension -DestinationPath TNxIDM-PC-Windows-v1.1.zip -Force"
       - name: Build installer with Inno Setup
         run: |
           choco install innosetup -y
@@ -28,8 +30,8 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0
-          name: TNxIDM v1.0
+          tag_name: v1.1
+          name: TNxIDM v1.1
           files: |
-            TNxIDM-PC-Windows-v1.0.zip
-            installer-output/TNxIDM-Setup-v1.0.exe
+            TNxIDM-PC-Windows-v1.1.zip
+            installer-output/TNxIDM-Setup-v1.1.exe
