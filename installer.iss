@@ -2,7 +2,7 @@
 ; Build on Windows after PyInstaller: iscc installer.iss
 ; Requires dist\TNxIDM\TNxIDM.exe (PyInstaller onedir output) in this folder.
 #define MyAppName "TNxIDM"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.1"
 #define MyAppPublisher "TNxIDM"
 
 [Setup]
@@ -13,7 +13,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 OutputDir=installer-output
-OutputBaseFilename=TNxIDM-Setup-v1.0
+OutputBaseFilename=TNxIDM-Setup-v1.1
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
