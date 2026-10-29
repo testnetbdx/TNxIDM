@@ -20,6 +20,8 @@ DEFAULTS = {
     "speed_limit_kbps": 0,
     "base_folder": default_base_folder(),
     "clipboard_monitor": True,
+    "browser_bridge": True,
+    "bridge_port": 8765,
     "language": "bn",
     "minimize_to_tray": True,
 }
